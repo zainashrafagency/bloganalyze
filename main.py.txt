@@ -1,0 +1,68 @@
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
+import requests
+from bs4 import BeautifulSoup
+from readability import Readability
+import textstat
+import re
+
+app = FastAPI()
+
+# Allow CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class BlogInput(BaseModel):
+    url: str = None
+    text: str = None
+
+def extract_text_from_url(url):
+    try:
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        paragraphs = soup.find_all(['p'])
+        full_text = " ".join([p.get_text() for p in paragraphs])
+        return full_text.strip()
+    except:
+        return ""
+
+@app.post("/analyze")
+def analyze_blog(data: BlogInput):
+    blog_text = data.text or extract_text_from_url(data.url)
+    if not blog_text or len(blog_text) < 100:
+        return {"error": "Blog content too short or invalid."}
+
+    # Clean
+    clean_text = re.sub(r'\s+', ' ', blog_text)
+
+    # Metrics
+    word_count = len(clean_text.split())
+    reading_time = round(word_count / 200, 2)  # 200 WPM
+    readability_score = textstat.flesch_reading_ease(clean_text)
+    sentence_count = textstat.sentence_count(clean_text)
+    difficult_words = textstat.difficult_words(clean_text)
+    smog_index = textstat.smog_index(clean_text)
+
+    return {
+        "word_count": word_count,
+        "reading_time": reading_time,
+        "readability_score": readability_score,
+        "sentence_count": sentence_count,
+        "difficult_words": difficult_words,
+        "smog_index": smog_index,
+        "summary_advice": generate_summary_advice(readability_score, smog_index)
+    }
+
+def generate_summary_advice(read_score, smog):
+    if read_score > 70 and smog < 7:
+        return "Great! The content is easily readable and well-structured."
+    elif read_score > 50:
+        return "Good readability. Consider simplifying complex terms."
+    else:
+        return "Hard to read. Shorten sentences and use simpler words."
+
